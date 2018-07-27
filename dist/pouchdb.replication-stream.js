@@ -101,9 +101,9 @@ module.exports = function () {
 },{"53":53,"8":8}],3:[function(_dereq_,module,exports){
 'use strict';
 
-module.exports = _dereq_(59).version;
+module.exports = _dereq_(58).version;
 
-},{"59":59}],4:[function(_dereq_,module,exports){
+},{"58":58}],4:[function(_dereq_,module,exports){
 (function (process){
 'use strict';
 
@@ -132,6 +132,8 @@ function WritableStreamPouch(opts, callback) {
   api.setupStream = function (stream) {
     api.ndj.pipe(stream);
   };
+
+  api._remote = true;
 
   /* istanbul ignore next */
   api.type = function () {
@@ -5936,10 +5938,13 @@ var Writable = _dereq_(41);
 
 util.inherits(Duplex, Readable);
 
-var keys = objectKeys(Writable.prototype);
-for (var v = 0; v < keys.length; v++) {
-  var method = keys[v];
-  if (!Duplex.prototype[method]) Duplex.prototype[method] = Writable.prototype[method];
+{
+  // avoid scope creep, the keys array can then be collected
+  var keys = objectKeys(Writable.prototype);
+  for (var v = 0; v < keys.length; v++) {
+    var method = keys[v];
+    if (!Duplex.prototype[method]) Duplex.prototype[method] = Writable.prototype[method];
+  }
 }
 
 function Duplex(options) {
@@ -5957,6 +5962,16 @@ function Duplex(options) {
 
   this.once('end', onend);
 }
+
+Object.defineProperty(Duplex.prototype, 'writableHighWaterMark', {
+  // making it explicit this property is not enumerable
+  // because otherwise some prototype manipulation in
+  // userland will fail
+  enumerable: false,
+  get: function () {
+    return this._writableState.highWaterMark;
+  }
+});
 
 // the no-half-open enforcer
 function onend() {
@@ -6000,12 +6015,6 @@ Duplex.prototype._destroy = function (err, cb) {
 
   pna.nextTick(cb, err);
 };
-
-function forEach(xs, f) {
-  for (var i = 0, l = xs.length; i < l; i++) {
-    f(xs[i], i);
-  }
-}
 },{"13":13,"34":34,"39":39,"41":41,"9":9}],38:[function(_dereq_,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -6934,6 +6943,16 @@ Readable.prototype.wrap = function (stream) {
   return this;
 };
 
+Object.defineProperty(Readable.prototype, 'readableHighWaterMark', {
+  // making it explicit this property is not enumerable
+  // because otherwise some prototype manipulation in
+  // userland will fail
+  enumerable: false,
+  get: function () {
+    return this._readableState.highWaterMark;
+  }
+});
+
 // exposed for testing purposes only.
 Readable._fromList = fromList;
 
@@ -7056,12 +7075,6 @@ function endReadableNT(state, stream) {
     state.endEmitted = true;
     stream.readable = false;
     stream.emit('end');
-  }
-}
-
-function forEach(xs, f) {
-  for (var i = 0, l = xs.length; i < l; i++) {
-    f(xs[i], i);
   }
 }
 
@@ -7658,6 +7671,16 @@ function decodeChunk(state, chunk, encoding) {
   }
   return chunk;
 }
+
+Object.defineProperty(Writable.prototype, 'writableHighWaterMark', {
+  // making it explicit this property is not enumerable
+  // because otherwise some prototype manipulation in
+  // userland will fail
+  enumerable: false,
+  get: function () {
+    return this._writableState.highWaterMark;
+  }
+});
 
 // if we're already writing something, then just put this
 // in the queue, and wait our turn.  Otherwise, call _write
@@ -8451,9 +8474,33 @@ Stream.prototype.pipe = function(dest, options) {
 };
 
 },{"10":10,"13":13,"36":36,"45":45,"46":46,"47":47,"48":48}],52:[function(_dereq_,module,exports){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 'use strict';
 
+/*<replacement>*/
+
 var Buffer = _dereq_(49).Buffer;
+/*</replacement>*/
 
 var isEncoding = Buffer.isEncoding || function (encoding) {
   encoding = '' + encoding;
@@ -8565,10 +8612,10 @@ StringDecoder.prototype.fillLast = function (buf) {
 };
 
 // Checks the type of a UTF-8 byte, whether it's ASCII, a leading byte, or a
-// continuation byte.
+// continuation byte. If an invalid byte is detected, -2 is returned.
 function utf8CheckByte(byte) {
   if (byte <= 0x7F) return 0;else if (byte >> 5 === 0x06) return 2;else if (byte >> 4 === 0x0E) return 3;else if (byte >> 3 === 0x1E) return 4;
-  return -1;
+  return byte >> 6 === 0x02 ? -1 : -2;
 }
 
 // Checks at most 3 bytes at the end of a Buffer in order to detect an
@@ -8582,13 +8629,13 @@ function utf8CheckIncomplete(self, buf, i) {
     if (nb > 0) self.lastNeed = nb - 1;
     return nb;
   }
-  if (--j < i) return 0;
+  if (--j < i || nb === -2) return 0;
   nb = utf8CheckByte(buf[j]);
   if (nb >= 0) {
     if (nb > 0) self.lastNeed = nb - 2;
     return nb;
   }
-  if (--j < i) return 0;
+  if (--j < i || nb === -2) return 0;
   nb = utf8CheckByte(buf[j]);
   if (nb >= 0) {
     if (nb > 0) {
@@ -8602,7 +8649,7 @@ function utf8CheckIncomplete(self, buf, i) {
 // Validates as many continuation bytes for a multi-byte UTF-8 character as
 // needed or are available. If we see a non-continuation byte where we expect
 // one, we "replace" the validated continuation bytes we've seen so far with
-// UTF-8 replacement characters ('\ufffd'), to match v8's UTF-8 decoding
+// a single UTF-8 replacement character ('\ufffd'), to match v8's UTF-8 decoding
 // behavior. The continuation byte check is included three times in the case
 // where all of the continuation bytes for a character exist in the same buffer.
 // It is also done this way as a slight performance increase instead of using a
@@ -8610,17 +8657,17 @@ function utf8CheckIncomplete(self, buf, i) {
 function utf8CheckExtraBytes(self, buf, p) {
   if ((buf[0] & 0xC0) !== 0x80) {
     self.lastNeed = 0;
-    return '\ufffd'.repeat(p);
+    return '\ufffd';
   }
   if (self.lastNeed > 1 && buf.length > 1) {
     if ((buf[1] & 0xC0) !== 0x80) {
       self.lastNeed = 1;
-      return '\ufffd'.repeat(p + 1);
+      return '\ufffd';
     }
     if (self.lastNeed > 2 && buf.length > 2) {
       if ((buf[2] & 0xC0) !== 0x80) {
         self.lastNeed = 2;
-        return '\ufffd'.repeat(p + 2);
+        return '\ufffd';
       }
     }
   }
@@ -8651,11 +8698,11 @@ function utf8Text(buf, i) {
   return buf.toString('utf8', i, end);
 }
 
-// For UTF-8, a replacement character for each buffered byte of a (partial)
-// character needs to be added to the output.
+// For UTF-8, a replacement character is added when ending on a partial
+// character.
 function utf8End(buf) {
   var r = buf && buf.length ? this.write(buf) : '';
-  if (this.lastNeed) return r + '\ufffd'.repeat(this.lastTotal - this.lastNeed);
+  if (this.lastNeed) return r + '\ufffd';
   return r;
 }
 
@@ -8726,8 +8773,8 @@ function simpleEnd(buf) {
 },{"49":49}],53:[function(_dereq_,module,exports){
 (function (process){
 var Transform = _dereq_(47)
-  , inherits  = _dereq_(57).inherits
-  , xtend     = _dereq_(58)
+  , inherits  = _dereq_(56).inherits
+  , xtend     = _dereq_(57)
 
 function DestroyableTransform(opts) {
   Transform.call(this, opts)
@@ -8823,7 +8870,7 @@ module.exports.obj = through2(function (options, transform, flush) {
 })
 
 }).call(this,_dereq_(35))
-},{"35":35,"47":47,"57":57,"58":58}],54:[function(_dereq_,module,exports){
+},{"35":35,"47":47,"56":56,"57":57}],54:[function(_dereq_,module,exports){
 (function (global){
 
 /**
@@ -8895,15 +8942,13 @@ function config (name) {
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
 },{}],55:[function(_dereq_,module,exports){
-arguments[4][13][0].apply(exports,arguments)
-},{"13":13}],56:[function(_dereq_,module,exports){
 module.exports = function isBuffer(arg) {
   return arg && typeof arg === 'object'
     && typeof arg.copy === 'function'
     && typeof arg.fill === 'function'
     && typeof arg.readUInt8 === 'function';
 }
-},{}],57:[function(_dereq_,module,exports){
+},{}],56:[function(_dereq_,module,exports){
 (function (process,global){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -9430,7 +9475,7 @@ function isPrimitive(arg) {
 }
 exports.isPrimitive = isPrimitive;
 
-exports.isBuffer = _dereq_(56);
+exports.isBuffer = _dereq_(55);
 
 function objectToString(o) {
   return Object.prototype.toString.call(o);
@@ -9474,7 +9519,7 @@ exports.log = function() {
  *     prototype.
  * @param {function} superCtor Constructor function to inherit prototype from.
  */
-exports.inherits = _dereq_(55);
+exports.inherits = _dereq_(13);
 
 exports._extend = function(origin, add) {
   // Don't do anything if add isn't an object
@@ -9493,7 +9538,7 @@ function hasOwnProperty(obj, prop) {
 }
 
 }).call(this,_dereq_(35),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"35":35,"55":55,"56":56}],58:[function(_dereq_,module,exports){
+},{"13":13,"35":35,"55":55}],57:[function(_dereq_,module,exports){
 module.exports = extend
 
 var hasOwnProperty = Object.prototype.hasOwnProperty;
@@ -9514,7 +9559,7 @@ function extend() {
     return target
 }
 
-},{}],59:[function(_dereq_,module,exports){
+},{}],58:[function(_dereq_,module,exports){
 module.exports={
   "name": "pouchdb-replication-stream",
   "version": "1.2.9",
@@ -9587,7 +9632,7 @@ module.exports={
   }
 }
 
-},{}],60:[function(_dereq_,module,exports){
+},{}],59:[function(_dereq_,module,exports){
 'use strict';
 
 var utils = _dereq_(1);
@@ -9627,7 +9672,7 @@ exports.plugin.dump = utils.toPromise(function (writableStream, opts, callback) 
   // db.name replaced db._db_name in pouch 6.0.0
   /* istanbul ignore next */
   var dbName = self.name || self._db_name;
-  var output = new PouchDB(dbName, {
+  var output = new PouchDB('WS$' + dbName, {
     adapter: 'writableStream'
   });
   output.setupStream(writableStream);
@@ -9644,7 +9689,13 @@ exports.plugin.dump = utils.toPromise(function (writableStream, opts, callback) 
     if (!opts.batch_size) {
       opts.batch_size = DEFAULT_BATCH_SIZE;
     }
-    return self.replicate.to(output, opts);
+
+    var replication = self.replicate.to(output, opts);
+    writableStream.on("finish", function () {
+      replication.cancel();
+    });
+
+    return replication;
   }).then(function () {
     return output.close();
   }).then(function () {
@@ -9678,39 +9729,39 @@ exports.plugin.load = utils.toPromise(function (readableStream, opts, callback) 
 
   var queue = [];
   readableStream
-  .pipe(toBufferStream())
-  .pipe(ndj.parse())
-  .on('error', function (errorCatched) {
-    error = errorCatched;
-  })
-  .pipe(through(function (data, _, next) {
-    if (!data.docs) {
-      return next();
-    }
-    // lets smooth it out
-    data.docs.forEach(function (doc) {
-      this.push(doc);
-    }, this);
-    next();
-  }))
-  .pipe(through(function (doc, _, next) {
-    queue.push(doc);
-    if (queue.length >= batchSize) {
-      this.push(queue);
-      queue = [];
-    }
-    next();
-  }, function (next) {
-    if (queue.length) {
-      this.push(queue);
-    }
-    next();
-  }))
-  .pipe(this.createWriteStream({new_edits: false}))
-  .on('error', callback)
-  .on('finish', function () {
-    callback(error, {ok: true});
-  });
+    .pipe(toBufferStream())
+    .pipe(ndj.parse())
+    .on('error', function (errorCatched) {
+      error = errorCatched;
+    })
+    .pipe(through(function (data, _, next) {
+      if (!data.docs) {
+        return next();
+      }
+      // lets smooth it out
+      data.docs.forEach(function (doc) {
+        this.push(doc);
+      }, this);
+      next();
+    }))
+    .pipe(through(function (doc, _, next) {
+      queue.push(doc);
+      if (queue.length >= batchSize) {
+        this.push(queue);
+        queue = [];
+      }
+      next();
+    }, function (next) {
+      if (queue.length) {
+        this.push(queue);
+      }
+      next();
+    }))
+    .pipe(this.createWriteStream({new_edits: false}))
+    .on('error', callback)
+    .on('finish', function () {
+      callback(error, {ok: true});
+    });
 });
 
 /* istanbul ignore next */
@@ -9719,5 +9770,5 @@ if (typeof window !== 'undefined' && window.PouchDB) {
   window.PouchDB.adapter('writableStream', exports.adapters.writableStream);
 }
 
-},{"1":1,"18":18,"19":19,"2":2,"22":22,"3":3,"4":4,"53":53}]},{},[60])(60)
+},{"1":1,"18":18,"19":19,"2":2,"22":22,"3":3,"4":4,"53":53}]},{},[59])(59)
 });
