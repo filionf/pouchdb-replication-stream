@@ -133,14 +133,14 @@ function WritableStreamPouch(opts, callback) {
     api.ndj.pipe(stream);
   };
 
-  api._remote = true;
-
   /* istanbul ignore next */
   api.type = function () {
     return 'writableStream';
   };
 
-  api._remote = false;
+  // Setting the remote flag prevents looking for attachments within the stream.
+  // Which fails du to the ._get method non-existent.
+  api._remote = true;
 
   api._id = utils.toPromise(function (callback) {
     callback(null, api.instanceId);
